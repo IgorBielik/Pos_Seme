@@ -14,14 +14,20 @@
 
 // Smer pohybu
 typedef enum {
-    DIR_UP, DIR_DOWN, DIR_LEFT, DIR_RIGHT
+    DIR_UP,
+    DIR_DOWN,
+    DIR_LEFT,
+    DIR_RIGHT,
+    DIR_NONE
 } direction_t;
 
 // Akcia od klienta
 typedef enum {
-    ACTION_MOVE,      // Zmena smeru
-    ACTION_PAUSE,     // Pauza
-    ACTION_QUIT       // Ukončenie
+    ACTION_CREATE_GAME, // Vytvor novú hru
+    ACTION_JOIN_GAME,   // Pripoj sa k existujúcej hre
+    ACTION_MOVE,        // Zmena smeru
+    ACTION_PAUSE,       // Pauza
+    ACTION_QUIT         // Ukončenie
 } action_t;
 
 // Pozícia
@@ -42,6 +48,7 @@ typedef struct {
 
 // Stav hry (Server → Client)
 typedef struct {
+    int game_id;                // ID hry
     int elapsed_time;           // Čas od začiatku v sekundách
     snake_t snakes[MAX_PLAYERS];
     int player_count;
@@ -55,6 +62,7 @@ typedef struct {
 
 // Vstup od klienta (Client → Server)
 typedef struct {
+    int game_id;            // Ktorej hre patrí tento vstup
     action_t action;
     direction_t direction;  // Pre ACTION_MOVE
 } client_input_t;
