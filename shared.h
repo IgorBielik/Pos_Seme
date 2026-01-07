@@ -44,6 +44,7 @@ typedef struct {
     direction_t direction;
     int score;
     int alive;
+    int paused;
 } snake_t;
 
 // Stav hry (Server → Client)

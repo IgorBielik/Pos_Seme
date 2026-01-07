@@ -6,6 +6,9 @@
 // Inicializuje stav hry na prazdno
 void game_init(game_state_t *state);
 
+// Resetuje hru po skončení (vyčisti player_count a resources)
+void game_reset(game_state_t *state);
+
 // Prida hraca, vrati index noveho hraca alebo -1 ak je plno
 int game_add_player(game_state_t *state);
 

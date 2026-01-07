@@ -88,11 +88,15 @@ static void render_game(const game_state_t *state) {
     // Vypíš skóre
     printf("SKÓRE:\n");
     for (int i = 0; i < state->player_count; i++) {
-        if (state->snakes[i].alive) {
-            printf("  Hráč %d: %d bodov\n", i, state->snakes[i].score);
+        char status[20] = "";
+        if (!state->snakes[i].alive) {
+            strcpy(status, "[MŔTVY]");
+        } else if (state->snakes[i].paused) {
+            strcpy(status, "[PAUZA]");
         }
+        printf("  Hráč %d: %d bodov %s\n", i, state->snakes[i].score, status);
     }
-    printf("\nPokyny: W/A/S/D - pohyb, P - pauza, Q - odchod\n");
+    printf("\nPokyny: W/A/S/D - pohyb, P - menu, Q - odchod\n");
     if (!state->game_running) {
         printf("\n[HRA SKONČILA]\n");
     }
@@ -127,113 +131,106 @@ static int recv_game_state(game_state_t *state) {
     }
     return 1; // Žiadne dáta, retry
 }
-
-int main() {
-    // 1. Vytvorenie socketu
-    sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (sock < 0) {
-        perror("socket failed");
-        return 1;
-    }
-    
-    // 2. Pripojenie na server
-    struct sockaddr_in addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(PORT);
-    addr.sin_addr.s_addr = inet_addr("127.0.0.1");
-    
-    if (connect(sock, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-        perror("connect failed");
-        close(sock);
-        return 1;
-    }
-    
-    printf("Pripojený na server\n\n");
-    
-    // 3. Menu
+// Zobrazí menu a vráti voľbu (1-4 s aktívnou hrou, 1-3 bez nej)
+static int show_menu(int has_active_game) {
+    system("clear");
     printf("=== HADÍK - Menu ===\n");
-    printf("1. Vytvoriť novú hru\n");
-    printf("2. Pripojiť sa k hre\n");
-    printf("Zvoľ možnosť (1/2): ");
+    if (has_active_game) {
+        printf("1. Pokračovať v hre\n");
+        printf("2. Vytvoriť novú hru\n");
+        printf("3. Pripojiť sa k inej hre\n");
+        printf("4. Ukončiť program\n");
+        printf("Zvoľ možnosť (1-4): ");
+    } else {
+        printf("1. Vytvoriť novú hru\n");
+        printf("2. Pripojiť sa k hre\n");
+        printf("3. Ukončiť program\n");
+        printf("Zvoľ možnosť (1-3): ");
+    }
     fflush(stdout);
     
     int choice = 0;
     if (scanf("%d", &choice) != 1) {
-        printf("Neplatný vstup\n");
-        close(sock);
-        return 1;
+        return -1;
     }
     int c;
     while ((c = getchar()) != '\n' && c != EOF);
+    return choice;
+}
+
+// Spracuje menu a vráti: 0=pokračovanie, 1=nová hra, 2=join iná hra, -1=exit
+// out_gid sa naplní ak ide o join
+static int handle_menu(int *out_gid, int has_active_game, int active_game_id) {
+    int choice = show_menu(has_active_game);
     
-    // 4. Odošli akciu
-    if (choice == 1) {
-        printf("Vytváram novú hru...\n");
-        if (send_input(ACTION_CREATE_GAME, DIR_RIGHT) < 0) {
-            perror("send failed");
-            close(sock);
-            return 1;
+    if (choice < 0) {
+        printf("Neplatný vstup\n");
+        return -1;
+    }
+    
+
+    if (choice == 1 && has_active_game) {
+        // Pokračovať
+        printf("Pokračujem v hre %d...\n", active_game_id);
+        return 0;
+    } else if ((choice == 1 && !has_active_game) || (choice == 2 && has_active_game)) {
+        // Nová hra
+        if (has_active_game) {
+            send_input(ACTION_QUIT, DIR_NONE);
+            usleep(100000);
         }
-    } else if (choice == 2) {
+        printf("Vytváram novú hru...\n");
+        return 1;
+    } else if ((choice == 2 && !has_active_game) || (choice == 3 && has_active_game)) {
+        // Join iná hra
+        if (has_active_game) {
+            send_input(ACTION_QUIT, DIR_NONE);
+            usleep(100000);
+        }
+        
         printf("Zadaj ID hry (0-%d): ", MAX_PLAYERS - 1);
         fflush(stdout);
-        int gid = 0;
-        if (scanf("%d", &gid) != 1) {
+        if (scanf("%d", out_gid) != 1) {
             printf("Neplatný vstup\n");
-            close(sock);
-            return 1;
+            return -1;
         }
+        int c;
         while ((c = getchar()) != '\n' && c != EOF);
-        
-        game_id = gid;
-        printf("Pripájam sa k hre %d...\n", gid);
-        if (send_input(ACTION_JOIN_GAME, DIR_RIGHT) < 0) {
-            perror("send failed");
-            close(sock);
-            return 1;
-        }
+        printf("Pripájam sa k hre %d...\n", *out_gid);
+        return 2;
     } else {
-        printf("Neplatná voľba\n");
-        close(sock);
-        return 1;
-    }
-    
-    // 5. Čakaj na prvý stav
-    printf("Čakám na server...\n");
-    game_state_t state;
-    memset(&state, 0, sizeof(state));
-    
-    int got_state = 0;
-    for (int i = 0; i < 50 && !got_state; i++) {
-        ssize_t n = recv(sock, &state, sizeof(game_state_t), 0);
-        if (n == sizeof(game_state_t)) {
-            game_id = state.game_id;
-            got_state = 1;
-            break;
+        // Exit
+        if (has_active_game) {
+            send_input(ACTION_QUIT, DIR_NONE);
         }
-        usleep(100000);
+        printf("Ukončujem...\n");
+        return -1;
     }
-    
-    if (!got_state) {
-        printf("Nepodarilo sa získať stav hry\n");
-        close(sock);
-        return 1;
-    }
-    
-    printf("Hra pripravená! Ovládanie: W/A/S/D, Q - ukončiť\n");
+}
+
+// Spustí hru, vráti 1 ak sa hráč chce vrátiť do menu, 0 ak chce exit
+static int play_game(int *out_old_game_id) {
+    printf("Hra pripravená! Ovládanie: W/A/S/D, P - menu, Q - ukončiť\n");
     printf("Spúšťam za 2 sekundy...\n");
     sleep(2);
     
-    // 6. Raw mode
+    // Raw mode
     enable_raw_mode();
     set_nonblocking(sock);
     
     direction_t current_dir = DIR_RIGHT;
     int running = 1;
+    game_state_t state;
+    memset(&state, 0, sizeof(state));
+    
+    // Načítaj aktuálny stav
+    for (int i = 0; i < 20; i++) {
+        if (recv_game_state(&state) == 0) break;
+        usleep(50000);
+    }
     render_game(&state);
     
-    // 7. Hlavný loop
+    // Hlavný loop
     while (running) {
         fd_set rfds;
         FD_ZERO(&rfds);
@@ -282,8 +279,16 @@ int main() {
                     case 'Q':
                     case 3:
                         send_input(ACTION_QUIT, DIR_NONE);
-                        running = 0;
-                        break;
+                        disable_raw_mode();
+                        *out_old_game_id = -1;
+                        return 0; // Exit program
+                    case 'p':
+                    case 'P':
+                        // Pauza - vráť sa do menu
+                        send_input(ACTION_PAUSE, DIR_NONE);
+                        disable_raw_mode();
+                        *out_old_game_id = game_id;
+                        return 1; // Vráť sa do menu
                 }
             }
         }
@@ -302,7 +307,106 @@ int main() {
     }
     
     disable_raw_mode();
-    printf("\nOdpájam sa...\n");
+    printf("\nHra skončila\n");
+    *out_old_game_id = -1;
+    return 1; // Vráť sa do menu
+}
+
+int main() {
+    // 1. Vytvorenie socketu
+    sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0) {
+        perror("socket failed");
+        return 1;
+    }
+    
+    // 2. Pripojenie na server
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(PORT);
+    addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+    
+    if (connect(sock, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+        perror("connect failed");
+        close(sock);
+        return 1;
+    }
+    
+    printf("Pripojený na server\n\n");
+    
+    int old_game_id = -1;
+    
+    // Hlavná slučka - menu a hra
+    while (1) {
+        // Menu
+        int has_active = (old_game_id >= 0);
+        int join_game_id = -1;
+        int menu_result = handle_menu(&join_game_id, has_active, old_game_id);
+        
+        if (menu_result == -1) {
+            // Exit
+            break;
+        }
+        
+        if (menu_result == 0) {
+            // Pokračovať - preskočí príjem nového stavu
+            game_id = old_game_id;
+        } else if (menu_result == 1) {
+            // Nová hra
+            game_id = -1;
+            if (send_input(ACTION_CREATE_GAME, DIR_NONE) < 0) {
+                perror("send failed");
+                close(sock);
+                return 1;
+            }
+            old_game_id = -1;
+        } else if (menu_result == 2) {
+            // Join iná hra
+            game_id = join_game_id;
+            if (send_input(ACTION_JOIN_GAME, DIR_NONE) < 0) {
+                perror("send failed");
+                close(sock);
+                return 1;
+            }
+            old_game_id = -1;
+        }
+        
+        // Čakaj na prvý stav (len ak to nie je pokračovanie)
+        if (menu_result != 0) {
+            printf("Čakám na server...\n");
+            game_state_t state;
+            memset(&state, 0, sizeof(state));
+            
+            int got_state = 0;
+            for (int i = 0; i < 50 && !got_state; i++) {
+                ssize_t n = recv(sock, &state, sizeof(game_state_t), 0);
+                if (n == sizeof(game_state_t)) {
+                    game_id = state.game_id;
+                    old_game_id = game_id;
+                    got_state = 1;
+                    break;
+                }
+                usleep(100000);
+            }
+            
+            if (!got_state) {
+                printf("Nepodarilo sa získať stav hry\n");
+                close(sock);
+                return 1;
+            }
+        }
+        
+        // Spusti hru
+        int play_result = play_game(&old_game_id);
+        if (play_result == 0) {
+            // Exit program
+            break;
+        }
+        // play_result == 1 znamená vráť sa do menu, slučka pokračuje
+    }
+    
+    printf("Odpájam sa...\n");
     close(sock);
     return 0;
 }

@@ -54,7 +54,7 @@ static void spawn_food_if_needed(game_state_t *state) {
 }
 
 static void move_snake(game_state_t *state, snake_t *s) {
-    if (!s->alive) return;
+    if (!s->alive || s->paused) return;
 
     position_t head = s->body[0];
     switch (s->direction) {
@@ -103,6 +103,15 @@ void game_init(game_state_t *state) {
     state->game_running = 0;
 }
 
+void game_reset(game_state_t *state) {
+    state->game_running = 0;
+    state->player_count = 0;
+    state->food_count = 0;
+    state->elapsed_time = 0;
+    memset(state->snakes, 0, sizeof(state->snakes));
+    memset(state->food, 0, sizeof(state->food));
+}
+
 int game_add_player(game_state_t *state) {
     int idx = -1;
     for (int i = 0; i < state->player_count; i++) {
@@ -125,6 +134,7 @@ int game_add_player(game_state_t *state) {
     s->direction = DIR_RIGHT;
     s->score = 0;
     s->alive = 1;
+    s->paused = 0;
 
     position_t head = random_free_position(state);
     s->body[0] = head;
@@ -138,7 +148,10 @@ int game_add_player(game_state_t *state) {
 
 void game_remove_player(game_state_t *state, int player_idx) {
     if (player_idx < 0 || player_idx >= state->player_count) return;
+    printf("Removing player %d from game %d\n", player_idx, state->game_id);
     state->snakes[player_idx].alive = 0;
+    state->snakes[player_idx].paused = 0;
+    state->player_count--;
 }
 
 void game_process_input(game_state_t *state, int player_idx, const client_input_t *input) {
@@ -152,18 +165,21 @@ void game_process_input(game_state_t *state, int player_idx, const client_input_
             if (!opposite(s->direction, input->direction)) {
                 s->direction = input->direction;
             }
+            s->paused = 0; // Resume on move
             break;
         case ACTION_QUIT:
             s->alive = 0;
             break;
         case ACTION_PAUSE:
+            s->paused = !s->paused; // Toggle pause
+            break;
         default:
             break;
     }
 }
 
 void game_tick(game_state_t *state) {
-    for (int i = 0; i < state->player_count; i++) {
+    for (int i = 0; i < sizeof(state->snakes) / sizeof(state->snakes[0]); i++) {
         move_snake(state, &state->snakes[i]);
     }
     spawn_food_if_needed(state);
