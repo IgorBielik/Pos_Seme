@@ -9,10 +9,12 @@
 #include <errno.h>
 #include <termios.h>
 #include <sys/select.h>
+#include <time.h>
 
 #include "shared.h"
 
 static int sock = -1;
+static int player_id = -1;  // Unikátny ID hráča
 static int game_id = -1;
 static struct termios orig_termios;
 
@@ -56,7 +58,8 @@ static void render_game(const game_state_t *state) {
     }
     
     // Vlož hadíkov
-    for (int i = 0; i < state->player_count; i++) {
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+        if (state->snakes[i].player_id == -1) continue;  // Voľný slot
         if (!state->snakes[i].alive) continue;
         char ch = '@' + i; // Rôzne znaky pre rôznych hráčov
         for (int j = 0; j < state->snakes[i].length; j++) {
@@ -87,7 +90,8 @@ static void render_game(const game_state_t *state) {
     
     // Vypíš skóre
     printf("SKÓRE:\n");
-    for (int i = 0; i < state->player_count; i++) {
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+        if (state->snakes[i].player_id == -1) continue;  // Voľný slot
         char status[20] = "";
         if (!state->snakes[i].alive) {
             strcpy(status, "[MŔTVY]");
@@ -106,6 +110,7 @@ static void render_game(const game_state_t *state) {
 // Pošle vstup na server
 static int send_input(action_t action, direction_t direction) {
     client_input_t input;
+    input.player_id = player_id;
     input.action = action;
     input.direction = direction;
     input.game_id = game_id;
@@ -334,6 +339,10 @@ int main() {
     }
     
     printf("Pripojený na server\n\n");
+    
+    // Vygeneruj unikátny ID hráča (podľa času + PID)
+    player_id = (int)time(NULL) * 1000 + getpid();
+    if (player_id < 0) player_id = -player_id;
     
     int old_game_id = -1;
     

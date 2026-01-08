@@ -12,14 +12,14 @@ static int positions_equal(position_t a, position_t b) {
 
 static int active_players(const game_state_t *state) {
     int alive = 0;
-    for (int i = 0; i < state->player_count; i++) {
+    for (int i = 0; i < MAX_PLAYERS; i++) {
         if (state->snakes[i].alive) alive++;
     }
     return alive;
 }
 
 static int cell_occupied(const game_state_t *state, position_t p) {
-    for (int i = 0; i < state->player_count; i++) {
+    for (int i = 0; i < MAX_PLAYERS; i++) {
         if (!state->snakes[i].alive) continue;
         for (int j = 0; j < state->snakes[i].length; j++) {
             if (positions_equal(state->snakes[i].body[j], p)) return 1;
@@ -66,7 +66,7 @@ static void move_snake(game_state_t *state, snake_t *s) {
     }
 
     // kolízia s telom alebo inými hadmi
-    for (int i = 0; i < state->player_count; i++) {
+    for (int i = 0; i < MAX_PLAYERS; i++) {
         if (!state->snakes[i].alive) continue;
         int len = state->snakes[i].length;
         for (int j = 0; j < len; j++) {
@@ -101,6 +101,10 @@ static void move_snake(game_state_t *state, snake_t *s) {
 void game_init(game_state_t *state) {
     memset(state, 0, sizeof(*state));
     state->game_running = 0;
+    // Inicializuj player_id na -1 (označuje voľné miesto)
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+        state->snakes[i].player_id = -1;
+    }
 }
 
 void game_reset(game_state_t *state) {
@@ -110,26 +114,44 @@ void game_reset(game_state_t *state) {
     state->elapsed_time = 0;
     memset(state->snakes, 0, sizeof(state->snakes));
     memset(state->food, 0, sizeof(state->food));
+    // Resetuj player_id na -1
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+        state->snakes[i].player_id = -1;
+    }
 }
 
-int game_add_player(game_state_t *state) {
+int game_add_player(game_state_t *state, int player_id) {
     int idx = -1;
-    for (int i = 0; i < state->player_count; i++) {
-        if (!state->snakes[i].alive) {
+    // Skontroluj, či hráč už v hre existuje
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+        if (state->snakes[i].player_id == player_id && state->snakes[i].alive) {
+            return i; // Hráč už existuje a žije
+        }
+    }
+    
+    // Skontroluj, či hráč zomrel v tejto hre - ak áno, vráť -2
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+        if (state->snakes[i].player_id == player_id && !state->snakes[i].alive) {
+            return -2; // Hráč je mŕtvy - nedovoľ reconnect
+        }
+    }
+    
+    // Hľadaj voľné miesto
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+        if (state->snakes[i].player_id == -1) {  // Voľný slot
             idx = i;
             break;
         }
     }
 
     if (idx == -1) {
-        if (state->player_count >= MAX_PLAYERS) return -1;
-        idx = state->player_count++;
+        return -1; // Plná hra
     }
 
     snake_t *s = &state->snakes[idx];
     memset(s, 0, sizeof(*s));
 
-    s->player_id = idx;
+    s->player_id = player_id;  // Použij podaný player_id
     s->length = 3;
     s->direction = DIR_RIGHT;
     s->score = 0;
@@ -146,17 +168,36 @@ int game_add_player(game_state_t *state) {
     return idx;
 }
 
-void game_remove_player(game_state_t *state, int player_idx) {
-    if (player_idx < 0 || player_idx >= state->player_count) return;
-    printf("Removing player %d from game %d\n", player_idx, state->game_id);
-    state->snakes[player_idx].alive = 0;
-    state->snakes[player_idx].paused = 0;
+void game_remove_player(game_state_t *state, int player_idx, int permanent) {
+    if (player_idx < 0 || player_idx >= MAX_PLAYERS) return;
+    printf("Removing player %d from game %d (permanent=%d)\n", player_idx, state->game_id, permanent);
+    
+    if (permanent) {
+        // Úplné resetovanie - oslobodi slot pre ďalšieho hráča
+        memset(&state->snakes[player_idx], 0, sizeof(snake_t));
+        state->snakes[player_idx].player_id = -1;  // Označí slot ako voľný
+    } else {
+        // Len označí ako mŕtveho - hráč sa môže vrátiť
+        state->snakes[player_idx].alive = 0;
+        state->snakes[player_idx].paused = 0;
+    }
     state->player_count--;
 }
 
-void game_process_input(game_state_t *state, int player_idx, const client_input_t *input) {
+void game_process_input(game_state_t *state, int player_id, const client_input_t *input) {
     if (!input) return;
-    if (player_idx < 0 || player_idx >= state->player_count) return;
+    
+    // Nájdi hadíka s daným player_id
+    int player_idx = -1;
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+        if (state->snakes[i].player_id == player_id) {
+            player_idx = i;
+            break;
+        }
+    }
+    
+    if (player_idx < 0) return;  // Hráč neexistuje
+    
     snake_t *s = &state->snakes[player_idx];
     if (!s->alive) return;
 
@@ -179,7 +220,7 @@ void game_process_input(game_state_t *state, int player_idx, const client_input_
 }
 
 void game_tick(game_state_t *state) {
-    for (int i = 0; i < sizeof(state->snakes) / sizeof(state->snakes[0]); i++) {
+    for (int i = 0; i < MAX_PLAYERS; i++) {
         move_snake(state, &state->snakes[i]);
     }
     spawn_food_if_needed(state);

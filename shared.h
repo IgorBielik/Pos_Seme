@@ -63,6 +63,7 @@ typedef struct {
 
 // Vstup od klienta (Client → Server)
 typedef struct {
+    int player_id;          // Unikátny ID hráča (generovaný na klientskej strane)
     int game_id;            // Ktorej hre patrí tento vstup
     action_t action;
     direction_t direction;  // Pre ACTION_MOVE
