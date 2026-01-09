@@ -13,48 +13,48 @@
 #include "shared.h"
 #include "game.h"
 
-typedef struct {
+typedef struct ClientSlot {
     int fd;
-    int player_id;  // Unikátny ID hráča
-    int player_idx; // index v games[game_id].snakes
-    int game_id;    // ID hry, ktorej patrí klient
+    int playerId;  // Unikátny ID hráča
+    int playerIdx; // index v games[gameId].snakes
+    int gameId;    // ID hry, ktorej patrí klient
     int active;
 } client_slot_t;
 
 static game_state_t games[MAX_PLAYERS];
 static client_slot_t clients[MAX_PLAYERS];
-static int elapsed_ms[MAX_PLAYERS] = {0};
-static pthread_t game_threads[MAX_PLAYERS];
-static pthread_mutex_t games_mutex = PTHREAD_MUTEX_INITIALIZER;
-static pthread_mutex_t clients_mutex = PTHREAD_MUTEX_INITIALIZER;
+static int elapsedMs[MAX_PLAYERS] = {0};
+static pthread_t gameThreads[MAX_PLAYERS];
+static pthread_mutex_t gamesMutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t clientsMutex = PTHREAD_MUTEX_INITIALIZER;
 
 
 
 static int find_free_game_slot(void) {
     for (int i = 0; i < MAX_PLAYERS; i++) {
-        if (!games[i].game_running && games[i].player_count == 0) {
+        if (!games[i].gameRunning && games[i].playerCount == 0) {
             return i;
         }
     }
     return -1;
 }
 
-static void broadcast_to_game(int game_id) {
-    pthread_mutex_lock(&clients_mutex);
+static void broadcast_to_game(int gameId) {
+    pthread_mutex_lock(&clientsMutex);
     for (int i = 0; i < MAX_PLAYERS; i++) {
-        if (clients[i].active && clients[i].game_id == game_id) {
+        if (clients[i].active && clients[i].gameId == gameId) {
             // Pošli stav všetkým hráčom
-            send(clients[i].fd, &games[game_id], sizeof(game_state_t), 0);
+            send(clients[i].fd, &games[gameId], sizeof(game_state_t), 0);
             
             // Ak je hra skončená, odpoji klienta z tejto hry
-            if (!games[game_id].game_running) {
-                clients[i].game_id = -1;
-                clients[i].player_idx = -1;
-                printf("Client %d released from finished game %d\n", i, game_id);
+            if (!games[gameId].gameRunning) {
+                clients[i].gameId = -1;
+                clients[i].playerIdx = -1;
+                printf("Client %d released from finished game %d\n", i, gameId);
             }
         }
     }
-    pthread_mutex_unlock(&clients_mutex);
+    pthread_mutex_unlock(&clientsMutex);
 }
 
 void* game_thread(void* arg) {
@@ -64,22 +64,21 @@ void* game_thread(void* arg) {
     printf("Game thread %d started\n", gid);
     
     while (1) {
-        pthread_mutex_lock(&games_mutex);
+        pthread_mutex_lock(&gamesMutex);
         
-        if (!games[gid].game_running) {
+        if (!games[gid].gameRunning) {
             printf("Game %d has no players, terminating thread\n", gid);
             game_reset(&games[gid]);
-            elapsed_ms[gid] = 0;
-            pthread_mutex_unlock(&games_mutex);
+            elapsedMs[gid] = 0;
+            pthread_mutex_unlock(&gamesMutex);
             break;
         }
         
         game_tick(&games[gid]);
-        elapsed_ms[gid] += GAME_LOOP_MS;
-        games[gid].elapsed_time = elapsed_ms[gid] / 1000;
+        elapsedMs[gid] += GAME_LOOP_MS;
+        games[gid].elapsedTime = elapsedMs[gid] / 1000;
         
-
-        pthread_mutex_unlock(&games_mutex);
+        pthread_mutex_unlock(&gamesMutex);
         
         broadcast_to_game(gid);
         
@@ -94,20 +93,20 @@ static int create_new_game(void) {
     int gid = find_free_game_slot();
     if (gid < 0) return -1;
     
-    pthread_mutex_lock(&games_mutex);
+    pthread_mutex_lock(&gamesMutex);
     game_init(&games[gid]);
-    games[gid].game_id = gid;
-    pthread_mutex_unlock(&games_mutex);
+    games[gid].gameId = gid;
+    pthread_mutex_unlock(&gamesMutex);
     
     // Spusti vlákno pre túto hru
     int *arg = malloc(sizeof(int));
     *arg = gid;
-    if (pthread_create(&game_threads[gid], NULL, game_thread, arg) != 0) {
+    if (pthread_create(&gameThreads[gid], NULL, game_thread, arg) != 0) {
         perror("pthread_create failed");
         free(arg);
         return -1;
     }
-    pthread_detach(game_threads[gid]);
+    pthread_detach(gameThreads[gid]);
     
     return gid;
 }
@@ -115,53 +114,53 @@ static int create_new_game(void) {
 static void remove_client(int client_idx) {
     if (client_idx < 0 || client_idx >= MAX_PLAYERS) return;
     
-    pthread_mutex_lock(&clients_mutex);
+    pthread_mutex_lock(&clientsMutex);
     if (!clients[client_idx].active) {
-        pthread_mutex_unlock(&clients_mutex);
+        pthread_mutex_unlock(&clientsMutex);
         return;
     }
     
-    int gid = clients[client_idx].game_id;
-    int pidx = clients[client_idx].player_idx;
+    int gid = clients[client_idx].gameId;
+    int pidx = clients[client_idx].playerIdx;
     
     close(clients[client_idx].fd);
     clients[client_idx].active = 0;
-    pthread_mutex_unlock(&clients_mutex);
+    pthread_mutex_unlock(&clientsMutex);
     
     if (gid >= 0) {
-        pthread_mutex_lock(&games_mutex);
+        pthread_mutex_lock(&gamesMutex);
         game_remove_player(&games[gid], pidx, 0);  // 0 = hráč sa môže vrátiť
-        pthread_mutex_unlock(&games_mutex);
+        pthread_mutex_unlock(&gamesMutex);
     }
 }
 
 static void process_input_wrapper(int client_idx, const client_input_t *input) {
-    pthread_mutex_lock(&clients_mutex);
+    pthread_mutex_lock(&clientsMutex);
     if (client_idx < 0 || !clients[client_idx].active) {
-        pthread_mutex_unlock(&clients_mutex);
+        pthread_mutex_unlock(&clientsMutex);
         return;
     }
-    int gid = clients[client_idx].game_id;
-    int pidx = clients[client_idx].player_idx;
-    int player_id = clients[client_idx].player_id;
-    pthread_mutex_unlock(&clients_mutex);
+    int gid = clients[client_idx].gameId;
+    int pidx = clients[client_idx].playerIdx;
+    int playerId = clients[client_idx].playerId;
+    pthread_mutex_unlock(&clientsMutex);
     
-    pthread_mutex_lock(&games_mutex);
+    pthread_mutex_lock(&gamesMutex);
     
     // Keď mŕtvy hráč AKÁKOĽVEK AKCIU vykoná, oslobodíme ho z hry
     if (pidx >= 0 && pidx < MAX_PLAYERS && !games[gid].snakes[pidx].alive) {
         game_remove_player(&games[gid], pidx, 1);  // 1 = permanent
-        pthread_mutex_unlock(&games_mutex);
+        pthread_mutex_unlock(&gamesMutex);
         
-        pthread_mutex_lock(&clients_mutex);
-        clients[client_idx].game_id = -1;
-        clients[client_idx].player_idx = -1;
-        pthread_mutex_unlock(&clients_mutex);
+        pthread_mutex_lock(&clientsMutex);
+        clients[client_idx].gameId = -1;
+        clients[client_idx].playerIdx = -1;
+        pthread_mutex_unlock(&clientsMutex);
         return;
     }
     
-    game_process_input(&games[gid], player_id, input);
-    pthread_mutex_unlock(&games_mutex);
+    game_process_input(&games[gid], playerId, input);
+    pthread_mutex_unlock(&gamesMutex);
 }
 
 int main(void) {
@@ -172,20 +171,20 @@ int main(void) {
     
     for (int i = 0; i < MAX_PLAYERS; i++) {
         clients[i].fd = -1;
-        clients[i].player_id = -1;
-        clients[i].player_idx = -1;
-        clients[i].game_id = -1;
+        clients[i].playerId = -1;
+        clients[i].playerIdx = -1;
+        clients[i].gameId = -1;
         clients[i].active = 0;
     }
 
-    int server_fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (server_fd < 0) {
+    int serverFd = socket(AF_INET, SOCK_STREAM, 0);
+    if (serverFd < 0) {
         perror("socket failed");
         return 1;
     }
 
     int opt = 1;
-    setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    setsockopt(serverFd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
@@ -193,15 +192,15 @@ int main(void) {
     addr.sin_addr.s_addr = INADDR_ANY;
     addr.sin_port = htons(PORT);
 
-    if (bind(server_fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+    if (bind(serverFd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
         perror("bind failed");
-        close(server_fd);
+        close(serverFd);
         return 1;
     }
     
-    if (listen(server_fd, 8) < 0) {
+    if (listen(serverFd, 8) < 0) {
         perror("listen failed");
-        close(server_fd);
+        close(serverFd);
         return 1;
     }
 
@@ -211,9 +210,9 @@ int main(void) {
     while (1) {
         fd_set rfds;
         FD_ZERO(&rfds);
-        FD_SET(server_fd, &rfds);
+        FD_SET(serverFd, &rfds);
         FD_SET(STDIN_FILENO, &rfds);
-        int maxfd = server_fd;
+        int maxfd = serverFd;
         
         for (int i = 0; i < MAX_PLAYERS; i++) {
             if (clients[i].active) {
@@ -240,10 +239,10 @@ int main(void) {
             }
         }
         
-        if (FD_ISSET(server_fd, &rfds)) {
-            int cfd = accept(server_fd, NULL, NULL);
+        if (FD_ISSET(serverFd, &rfds)) {
+            int cfd = accept(serverFd, NULL, NULL);
             if (cfd >= 0) {
-                pthread_mutex_lock(&clients_mutex);
+                pthread_mutex_lock(&clientsMutex);
                 int slot = -1;
                 for (int i = 0; i < MAX_PLAYERS; i++) {
                     if (!clients[i].active) {
@@ -253,15 +252,15 @@ int main(void) {
                 }
                 if (slot >= 0) {
                     clients[slot].fd = cfd;
-                    clients[slot].game_id = -1;
-                    clients[slot].player_idx = -1;
+                    clients[slot].gameId = -1;
+                    clients[slot].playerIdx = -1;
                     clients[slot].active = 1;
                     printf("Client %d connected, waiting for action\n", slot);
                 } else {
                     close(cfd);
                     printf("Rejected connection, server full\n");
                 }
-                pthread_mutex_unlock(&clients_mutex);
+                pthread_mutex_unlock(&clientsMutex);
             }
         }
         
@@ -275,67 +274,67 @@ int main(void) {
                     printf("Client %d disconnected\n", i);
                 } else {
                     // Ulož player_id z vstupu
-                    pthread_mutex_lock(&clients_mutex);
-                    clients[i].player_id = in.player_id;
-                    int has_game = clients[i].game_id >= 0;
-                    int old_game_id = clients[i].game_id;
-                    int old_player_idx = clients[i].player_idx;
-                    pthread_mutex_unlock(&clients_mutex);
+                    pthread_mutex_lock(&clientsMutex);
+                    clients[i].playerId = in.playerId;
+                    int has_game = clients[i].gameId >= 0;
+                    int oldGameId = clients[i].gameId;
+                    int oldPlayerIdx = clients[i].playerIdx;
+                    pthread_mutex_unlock(&clientsMutex);
                     
                     // Ak klient chce odísť zo svojej hry
                     if (has_game && in.action == ACTION_QUIT) {
-                        pthread_mutex_lock(&games_mutex);
-                        game_remove_player(&games[old_game_id], old_player_idx, 1);  // 1 = úplné oslobodenie
-                        pthread_mutex_unlock(&games_mutex);
+                        pthread_mutex_lock(&gamesMutex);
+                        game_remove_player(&games[oldGameId], oldPlayerIdx, 1);  // 1 = úplné oslobodenie
+                        pthread_mutex_unlock(&gamesMutex);
                         
-                        pthread_mutex_lock(&clients_mutex);
-                        clients[i].game_id = -1;
-                        clients[i].player_idx = -1;
-                        pthread_mutex_unlock(&clients_mutex);
+                        pthread_mutex_lock(&clientsMutex);
+                        clients[i].gameId = -1;
+                        clients[i].playerIdx = -1;
+                        pthread_mutex_unlock(&clientsMutex);
                         
-                        printf("Client %d quit game %d\n", i, old_game_id);
+                        printf("Client %d quit game %d\n", i, oldGameId);
                     }
                     // Vytvor novú hru (quit volaný pred týmto)
                     else if (!has_game && in.action == ACTION_CREATE_GAME) {
                         int gid = create_new_game();
                         if (gid >= 0) {
-                            pthread_mutex_lock(&games_mutex);
-                            int pidx = game_add_player(&games[gid], in.player_id);
-                            pthread_mutex_unlock(&games_mutex);
+                            pthread_mutex_lock(&gamesMutex);
+                            int pidx = game_add_player(&games[gid], in.playerId);
+                            pthread_mutex_unlock(&gamesMutex);
                             
                             if (pidx >= 0) {
-                                pthread_mutex_lock(&clients_mutex);
-                                clients[i].player_id = in.player_id;
-                                clients[i].game_id = gid;
-                                clients[i].player_idx = pidx;
-                                pthread_mutex_unlock(&clients_mutex);
+                                pthread_mutex_lock(&clientsMutex);
+                                clients[i].playerId = in.playerId;
+                                clients[i].gameId = gid;
+                                clients[i].playerIdx = pidx;
+                                pthread_mutex_unlock(&clientsMutex);
                                 
                                 printf("Client %d created game %d\n", i, gid);
                                 usleep(500000);
                                 broadcast_to_game(gid);
                             } else {
-                                printf("Player %d cannot create game (dead/full)\n", in.player_id);
+                                printf("Player %d cannot create game (dead/full)\n", in.playerId);
                                 send(clients[i].fd, &games[gid], sizeof(game_state_t), 0);
                             }
                         }
                     }
                     // Pripoj sa k existujúcej hre (klient už poslal QUIT pred týmto)
                     else if (!has_game && in.action == ACTION_JOIN_GAME) {
-                        int gid = in.game_id;
-                        pthread_mutex_lock(&games_mutex);
-                        int can_join = (gid >= 0 && gid < MAX_PLAYERS && games[gid].game_running);
+                        int gid = in.gameId;
+                        pthread_mutex_lock(&gamesMutex);
+                        int can_join = (gid >= 0 && gid < MAX_PLAYERS && games[gid].gameRunning);
                         int pidx = -1;
                         if (can_join) {
-                            pidx = game_add_player(&games[gid], in.player_id);
+                            pidx = game_add_player(&games[gid], in.playerId);
                         }
-                        pthread_mutex_unlock(&games_mutex);
+                        pthread_mutex_unlock(&gamesMutex);
                         
                         if (pidx >= 0) {
-                            pthread_mutex_lock(&clients_mutex);
-                            clients[i].player_id = in.player_id;
-                            clients[i].game_id = gid;
-                            clients[i].player_idx = pidx;
-                            pthread_mutex_unlock(&clients_mutex);
+                            pthread_mutex_lock(&clientsMutex);
+                            clients[i].playerId = in.playerId;
+                            clients[i].gameId = gid;
+                            clients[i].playerIdx = pidx;
+                            pthread_mutex_unlock(&clientsMutex);
                             printf("Client %d joined game %d\n", i, gid);
                             usleep(500000);
                             broadcast_to_game(gid);
@@ -369,10 +368,10 @@ int main(void) {
     sleep(1);
     
     // Zničit mutexy
-    pthread_mutex_destroy(&games_mutex);
-    pthread_mutex_destroy(&clients_mutex);
+    pthread_mutex_destroy(&gamesMutex);
+    pthread_mutex_destroy(&clientsMutex);
     
-    close(server_fd);
+    close(serverFd);
     printf("Server shutdown complete\n");
     return 0;
 }

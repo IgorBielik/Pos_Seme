@@ -14,19 +14,19 @@
 #include "shared.h"
 
 static int sock = -1;
-static int player_id = -1;  // Unikátny ID hráča
-static int game_id = -1;
-static struct termios orig_termios;
+static int playerId = -1;  // Unikátny ID hráča
+static int gameId = -1;
+static struct termios origTermios;
 
 static void disable_raw_mode(void) {
-    tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios);
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &origTermios);
 }
 
 static void enable_raw_mode(void) {
-    tcgetattr(STDIN_FILENO, &orig_termios);
+    tcgetattr(STDIN_FILENO, &origTermios);
     atexit(disable_raw_mode);
     
-    struct termios raw = orig_termios;
+    struct termios raw = origTermios;
     raw.c_lflag &= ~(ECHO | ICANON);
     tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
 }
@@ -42,15 +42,15 @@ static void set_nonblocking(int fd) {
 // Vykresľuje hru
 static void render_game(const game_state_t *state) {
     system("clear");
-    printf("=== HADÍK - Hra ID: %d ===\n", state->game_id);
-    printf("Čas: %d s | Hráči: %d\n\n", state->elapsed_time, state->player_count);
+    printf("=== HADÍK - Hra ID: %d ===\n", state->gameId);
+    printf("Čas: %d s | Hráči: %d\n\n", state->elapsedTime, state->playerCount);
     
     // Vytvor mapu
     char map[WORLD_HEIGHT][WORLD_WIDTH];
     memset(map, ' ', sizeof(map));
     
     // Vlož ovocie
-    for (int f = 0; f < state->food_count; f++) {
+    for (int f = 0; f < state->foodCount; f++) {
         if (state->food[f].y >= 0 && state->food[f].y < WORLD_HEIGHT &&
             state->food[f].x >= 0 && state->food[f].x < WORLD_WIDTH) {
             map[state->food[f].y][state->food[f].x] = '*';
@@ -59,7 +59,7 @@ static void render_game(const game_state_t *state) {
     
     // Vlož hadíkov
     for (int i = 0; i < MAX_PLAYERS; i++) {
-        if (state->snakes[i].player_id == -1) continue;  // Voľný slot
+        if (state->snakes[i].playerId == -1) continue;  // Voľný slot
         if (!state->snakes[i].alive) continue;
         char ch = '@' + i; // Rôzne znaky pre rôznych hráčov
         for (int j = 0; j < state->snakes[i].length; j++) {
@@ -91,7 +91,7 @@ static void render_game(const game_state_t *state) {
     // Vypíš skóre
     printf("SKÓRE:\n");
     for (int i = 0; i < MAX_PLAYERS; i++) {
-        if (state->snakes[i].player_id == -1) continue;  // Voľný slot
+        if (state->snakes[i].playerId == -1) continue;  // Voľný slot
         char status[20] = "";
         if (!state->snakes[i].alive) {
             strcpy(status, "[MŔTVY]");
@@ -101,7 +101,7 @@ static void render_game(const game_state_t *state) {
         printf("  Hráč %d: %d bodov %s\n", i, state->snakes[i].score, status);
     }
     printf("\nPokyny: W/A/S/D - pohyb, P - menu, Q - odchod\n");
-    if (!state->game_running) {
+    if (!state->gameRunning) {
         printf("\n[HRA SKONČILA]\n");
     }
     
@@ -110,10 +110,10 @@ static void render_game(const game_state_t *state) {
 // Pošle vstup na server
 static int send_input(action_t action, direction_t direction) {
     client_input_t input;
-    input.player_id = player_id;
+    input.playerId = playerId;
     input.action = action;
     input.direction = direction;
-    input.game_id = game_id;
+    input.gameId = gameId;
     
     ssize_t n = send(sock, &input, sizeof(input), 0);
     return n == sizeof(input) ? 0 : -1;
@@ -123,7 +123,7 @@ static int send_input(action_t action, direction_t direction) {
 static int recv_game_state(game_state_t *state) {
     ssize_t n = recv(sock, state, sizeof(game_state_t), 0);
     if (n == sizeof(game_state_t)) {
-        game_id = state->game_id;
+        gameId = state->gameId;
         return 0;
     }
     if (n == 0) {
@@ -223,7 +223,7 @@ static int play_game(int *out_old_game_id) {
     enable_raw_mode();
     set_nonblocking(sock);
     
-    direction_t current_dir = DIR_RIGHT;
+    direction_t currentDir = DIR_RIGHT;
     int running = 1;
     game_state_t state;
     memset(&state, 0, sizeof(state));
@@ -254,30 +254,30 @@ static int play_game(int *out_old_game_id) {
                 switch (ch) {
                     case 'w':
                     case 'W':
-                        if (current_dir != DIR_DOWN) {
-                            current_dir = DIR_UP;
-                            send_input(ACTION_MOVE, current_dir);
+                        if (currentDir != DIR_DOWN) {
+                            currentDir = DIR_UP;
+                            send_input(ACTION_MOVE, currentDir);
                         }
                         break;
                     case 's':
                     case 'S':
-                        if (current_dir != DIR_UP) {
-                            current_dir = DIR_DOWN;
-                            send_input(ACTION_MOVE, current_dir);
+                        if (currentDir != DIR_UP) {
+                            currentDir = DIR_DOWN;
+                            send_input(ACTION_MOVE, currentDir);
                         }
                         break;
                     case 'a':
                     case 'A':
-                        if (current_dir != DIR_RIGHT) {
-                            current_dir = DIR_LEFT;
-                            send_input(ACTION_MOVE, current_dir);
+                        if (currentDir != DIR_RIGHT) {
+                            currentDir = DIR_LEFT;
+                            send_input(ACTION_MOVE, currentDir);
                         }
                         break;
                     case 'd':
                     case 'D':
-                        if (current_dir != DIR_LEFT) {
-                            current_dir = DIR_RIGHT;
-                            send_input(ACTION_MOVE, current_dir);
+                        if (currentDir != DIR_LEFT) {
+                            currentDir = DIR_RIGHT;
+                            send_input(ACTION_MOVE, currentDir);
                         }
                         break;
                     case 'q':
@@ -292,7 +292,7 @@ static int play_game(int *out_old_game_id) {
                         // Pauza - vráť sa do menu
                         send_input(ACTION_PAUSE, DIR_NONE);
                         disable_raw_mode();
-                        *out_old_game_id = game_id;
+                        *out_old_game_id = gameId;
                         return 1; // Vráť sa do menu
                 }
             }
@@ -304,7 +304,7 @@ static int play_game(int *out_old_game_id) {
                 running = 0;
             } else if (recv_ret == 0) {
                 render_game(&state);
-                if (!state.game_running) {
+                if (!state.gameRunning) {
                     running = 0;
                 }
             }
@@ -341,17 +341,17 @@ int main() {
     printf("Pripojený na server\n\n");
     
     // Vygeneruj unikátny ID hráča (podľa času + PID)
-    player_id = (int)time(NULL) * 1000 + getpid();
-    if (player_id < 0) player_id = -player_id;
+    playerId = (int)time(NULL) * 1000 + getpid();
+    if (playerId < 0) playerId = -playerId;
     
-    int old_game_id = -1;
+    int oldGameId = -1;
     
     // Hlavná slučka - menu a hra
     while (1) {
         // Menu
-        int has_active = (old_game_id >= 0);
+        int has_active = (oldGameId >= 0);
         int join_game_id = -1;
-        int menu_result = handle_menu(&join_game_id, has_active, old_game_id);
+        int menu_result = handle_menu(&join_game_id, has_active, oldGameId);
         
         if (menu_result == -1) {
             // Exit
@@ -360,25 +360,25 @@ int main() {
         
         if (menu_result == 0) {
             // Pokračovať - preskočí príjem nového stavu
-            game_id = old_game_id;
+            gameId = oldGameId;
         } else if (menu_result == 1) {
             // Nová hra
-            game_id = -1;
+            gameId = -1;
             if (send_input(ACTION_CREATE_GAME, DIR_NONE) < 0) {
                 perror("send failed");
                 close(sock);
                 return 1;
             }
-            old_game_id = -1;
+            oldGameId = -1;
         } else if (menu_result == 2) {
             // Join iná hra
-            game_id = join_game_id;
+            gameId = join_game_id;
             if (send_input(ACTION_JOIN_GAME, DIR_NONE) < 0) {
                 perror("send failed");
                 close(sock);
                 return 1;
             }
-            old_game_id = -1;
+            oldGameId = -1;
         }
         
         // Čakaj na prvý stav (len ak to nie je pokračovanie)
@@ -391,8 +391,8 @@ int main() {
             for (int i = 0; i < 50 && !got_state; i++) {
                 ssize_t n = recv(sock, &state, sizeof(game_state_t), 0);
                 if (n == sizeof(game_state_t)) {
-                    game_id = state.game_id;
-                    old_game_id = game_id;
+                    gameId = state.gameId;
+                    oldGameId = gameId;
                     got_state = 1;
                     break;
                 }
@@ -407,7 +407,7 @@ int main() {
         }
         
         // Spusti hru
-        int play_result = play_game(&old_game_id);
+        int play_result = play_game(&oldGameId);
         if (play_result == 0) {
             // Exit program
             break;

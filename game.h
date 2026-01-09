@@ -10,15 +10,15 @@ void game_init(game_state_t *state);
 void game_reset(game_state_t *state);
 
 // Prida hraca, vrati index noveho hraca alebo -1 ak je plno
-int game_add_player(game_state_t *state, int player_id);
+int game_add_player(game_state_t *state, int playerId);
 
 // Označí hráča ako neaktívneho (mŕtvy/odpojený)
 // permanent=1: resetuje slot úplne (aby sa mohol pripojiť ďalší)
 // permanent=0: iba označí ako mŕtveho (hráč sa môže vrátiť)
-void game_remove_player(game_state_t *state, int player_idx, int permanent);
+void game_remove_player(game_state_t *state, int playerIdx, int permanent);
 
 // Spracuje vstup klienta (smer/pauza/quit) podľa player_id
-void game_process_input(game_state_t *state, int player_id, const client_input_t *input);
+void game_process_input(game_state_t *state, int playerId, const client_input_t *input);
 
 // Jeden tick hernej logiky (pohyb, kolízie, ovocie, skóre)
 void game_tick(game_state_t *state);
