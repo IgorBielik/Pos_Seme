@@ -108,6 +108,7 @@ void game_init(game_state_t *state) {
 }
 
 void game_reset(game_state_t *state) {
+    int old_game_id = state->game_id;  // Ulož game_id pred resetom
     state->game_running = 0;
     state->player_count = 0;
     state->food_count = 0;
@@ -118,6 +119,7 @@ void game_reset(game_state_t *state) {
     for (int i = 0; i < MAX_PLAYERS; i++) {
         state->snakes[i].player_id = -1;
     }
+    state->game_id = old_game_id;  // Obnov game_id
 }
 
 int game_add_player(game_state_t *state, int player_id) {
@@ -163,6 +165,7 @@ int game_add_player(game_state_t *state, int player_id) {
     s->body[1] = (position_t){(head.x - 1 + WORLD_WIDTH) % WORLD_WIDTH, head.y};
     s->body[2] = (position_t){(head.x - 2 + WORLD_WIDTH) % WORLD_WIDTH, head.y};
 
+    state->player_count++;  // Zvýš počet hráčov
     state->game_running = 1;
     spawn_food_if_needed(state);
     return idx;
@@ -170,18 +173,24 @@ int game_add_player(game_state_t *state, int player_id) {
 
 void game_remove_player(game_state_t *state, int player_idx, int permanent) {
     if (player_idx < 0 || player_idx >= MAX_PLAYERS) return;
+    if (state->snakes[player_idx].player_id == -1) return;  // Už je voľný slot
+    
     printf("Removing player %d from game %d (permanent=%d)\n", player_idx, state->game_id, permanent);
+    
+    // Zníž player_count iba ak bol hráč živý
+    if (state->snakes[player_idx].alive && state->player_count > 0) {
+        state->player_count--;
+    }
     
     if (permanent) {
         // Úplné resetovanie - oslobodi slot pre ďalšieho hráča
         memset(&state->snakes[player_idx], 0, sizeof(snake_t));
         state->snakes[player_idx].player_id = -1;  // Označí slot ako voľný
     } else {
-        // Len označí ako mŕtveho - hráč sa môže vrátiť
+        // Mrtvy hráč - označí ako mŕtveho, ale nechá player_id
         state->snakes[player_idx].alive = 0;
         state->snakes[player_idx].paused = 0;
     }
-    state->player_count--;
 }
 
 void game_process_input(game_state_t *state, int player_id, const client_input_t *input) {
@@ -224,5 +233,7 @@ void game_tick(game_state_t *state) {
         move_snake(state, &state->snakes[i]);
     }
     spawn_food_if_needed(state);
-    state->game_running = active_players(state) > 0;
+    int alive = active_players(state);
+    state->player_count = alive; 
+    state->game_running = alive > 0;
 }

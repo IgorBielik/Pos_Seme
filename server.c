@@ -66,7 +66,7 @@ void* game_thread(void* arg) {
     while (1) {
         pthread_mutex_lock(&games_mutex);
         
-        if (!games[gid].game_running && games[gid].player_count == 0) {
+        if (!games[gid].game_running) {
             printf("Game %d has no players, terminating thread\n", gid);
             game_reset(&games[gid]);
             elapsed_ms[gid] = 0;
@@ -295,7 +295,7 @@ int main(void) {
                         
                         printf("Client %d quit game %d\n", i, old_game_id);
                     }
-                    // Vytvor novú hru (klient už poslal QUIT pred týmto)
+                    // Vytvor novú hru (quit volaný pred týmto)
                     else if (!has_game && in.action == ACTION_CREATE_GAME) {
                         int gid = create_new_game();
                         if (gid >= 0) {
@@ -315,7 +315,6 @@ int main(void) {
                                 broadcast_to_game(gid);
                             } else {
                                 printf("Player %d cannot create game (dead/full)\n", in.player_id);
-                                // Pošli prázdny stav hráčovi aby vedel, že sa nepridá
                                 send(clients[i].fd, &games[gid], sizeof(game_state_t), 0);
                             }
                         }
